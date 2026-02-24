@@ -12,7 +12,7 @@
 namespace DPI {
 
 // ============================================================================
-// Five-Tuple: Uniquely identifies a connection/flow
+// FiveTuple (Flow Identifier)
 // ============================================================================
 struct FiveTuple {
     uint32_t src_ip;
@@ -29,7 +29,6 @@ struct FiveTuple {
                protocol == other.protocol;
     }
     
-    // Create reverse tuple (for matching bidirectional flows)
     FiveTuple reverse() const {
         return {dst_ip, src_ip, dst_port, src_port, protocol};
     }
@@ -37,10 +36,9 @@ struct FiveTuple {
     std::string toString() const;
 };
 
-// Hash function for FiveTuple (used for load balancing)
+// Hash function for FiveTuple
 struct FiveTupleHash {
     size_t operator()(const FiveTuple& tuple) const {
-        // Simple but effective hash combining all fields
         size_t h = 0;
         h ^= std::hash<uint32_t>{}(tuple.src_ip) + 0x9e3779b9 + (h << 6) + (h >> 2);
         h ^= std::hash<uint32_t>{}(tuple.dst_ip) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -61,7 +59,6 @@ enum class AppType {
     DNS,
     TLS,
     QUIC,
-    // Specific applications (detected via SNI)
     GOOGLE,
     FACEBOOK,
     YOUTUBE,
@@ -79,8 +76,7 @@ enum class AppType {
     DISCORD,
     GITHUB,
     CLOUDFLARE,
-    // Add more as needed
-    APP_COUNT  // Keep this last for counting
+    APP_COUNT
 };
 
 std::string appTypeToString(AppType type);
@@ -98,62 +94,80 @@ enum class ConnectionState {
 };
 
 // ============================================================================
-// Packet Action (what to do with the packet)
+// Packet Action
 // ============================================================================
 enum class PacketAction {
-    FORWARD,    // Send to internet
-    DROP,       // Block/drop the packet
-    INSPECT,    // Needs further inspection
-    LOG_ONLY    // Forward but log
+    FORWARD,
+    DROP,
+    INSPECT,
+    LOG_ONLY
 };
 
 // ============================================================================
-// Connection Entry (tracked per flow)
+// Connection Entry
 // ============================================================================
 struct Connection {
     FiveTuple tuple;
     ConnectionState state = ConnectionState::NEW;
     AppType app_type = AppType::UNKNOWN;
-    std::string sni;  // Server Name Indication (if detected)
-    
+    std::string sni;
+
     uint64_t packets_in = 0;
     uint64_t packets_out = 0;
     uint64_t bytes_in = 0;
     uint64_t bytes_out = 0;
-    
+
     std::chrono::steady_clock::time_point first_seen;
     std::chrono::steady_clock::time_point last_seen;
-    
+
     PacketAction action = PacketAction::FORWARD;
-    
-    // For TCP state tracking
+
     bool syn_seen = false;
     bool syn_ack_seen = false;
     bool fin_seen = false;
 };
 
 // ============================================================================
-// Packet wrapper for queue passing
+// PacketJob  (ZERO-ALLOCATION READY)
 // ============================================================================
+
 struct PacketJob {
-    uint32_t packet_id;
+    uint32_t packet_id = 0;
     FiveTuple tuple;
-    std::vector<uint8_t> data;
+
+    // Raw packet buffer (memory pool ready)
+    uint8_t* data_ptr = nullptr;
+    uint16_t data_length = 0;
+    uint32_t pool_index = 0;   // future slab allocator index
+
+    // Offsets
     size_t eth_offset = 0;
     size_t ip_offset = 0;
     size_t transport_offset = 0;
     size_t payload_offset = 0;
     size_t payload_length = 0;
+
     uint8_t tcp_flags = 0;
+
+    // Pointer into payload region
     const uint8_t* payload_data = nullptr;
-    
-    // Timestamps
-    uint32_t ts_sec;
-    uint32_t ts_usec;
+
+    // Timestamp
+    uint32_t ts_sec = 0;
+    uint32_t ts_usec = 0;
+
+    // Safe helpers (replacement for vector API)
+    inline const uint8_t* data() const noexcept {
+        return data_ptr;
+    }
+
+    inline size_t size() const noexcept {
+        return data_length;
+    }
 };
 
 // ============================================================================
-// Statistics - uses regular uint64_t, protected by mutex externally
+// Statistics
 // ============================================================================
 struct DPIStats {
     std::atomic<uint64_t> total_packets{0};
@@ -164,8 +178,7 @@ struct DPIStats {
     std::atomic<uint64_t> udp_packets{0};
     std::atomic<uint64_t> other_packets{0};
     std::atomic<uint64_t> active_connections{0};
-    
-    // Non-copyable due to atomics
+
     DPIStats() = default;
     DPIStats(const DPIStats&) = delete;
     DPIStats& operator=(const DPIStats&) = delete;
@@ -173,4 +186,4 @@ struct DPIStats {
 
 } // namespace DPI
 
-#endif // DPI_TYPES_H
+#endif
