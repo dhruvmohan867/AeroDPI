@@ -1,0 +1,10 @@
+^C:\USERS\DHRUV MOHAN SHUKLA\DESKTOP\AERODPI\BUILD\CMAKEFILES\AFFD4038251C8A394C5294A09D032675\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\Microsoft Visual Studio\18\Insiders\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" "-SC:/Users/Dhruv mohan shukla/Desktop/AeroDPI" "-BC:/Users/Dhruv mohan shukla/Desktop/AeroDPI/build" --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file "C:/Users/Dhruv mohan shukla/Desktop/AeroDPI/build/PacketAnalyzer.slnx"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
