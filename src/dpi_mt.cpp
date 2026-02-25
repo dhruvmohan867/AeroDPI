@@ -1,6 +1,5 @@
-// Multi-threaded DPI Engine - Fixed Version
-// Architecture: Reader -> LB threads -> FP threads -> Output
 
+#include "memory_pool.h"
 #include <iostream>
 #include <fstream>
 #include <thread>
@@ -24,7 +23,7 @@
 
 using namespace PacketAnalyzer;
 using namespace DPI;
-
+static DPI::MemoryPool g_pool(100000);
 // =============================================================================
 // Thread-Safe Queue
 // =============================================================================
@@ -85,7 +84,9 @@ struct Packet {
     uint32_t ts_sec;
     uint32_t ts_usec;
     FiveTuple tuple;
-    std::vector<uint8_t> data;
+    uint32_t pool_slot;
+    uint8_t* data_ptr;
+    size_t data_length;
     uint8_t tcp_flags;
     size_t payload_offset;
     size_t payload_length;
@@ -234,7 +235,7 @@ private:
                 flow.tuple = pkt.tuple;
             }
             flow.packets++;
-            flow.bytes += pkt.data.size();
+            flow.bytes += pkt.data_length;
             
             // Try to classify if not done yet
             if (!flow.classified) {
@@ -262,7 +263,7 @@ private:
     void classifyFlow(Packet& pkt, FlowEntry& flow) {
         // Try SNI extraction for HTTPS
         if (pkt.tuple.dst_port == 443 && pkt.payload_length > 5) {
-            const uint8_t* payload = pkt.data.data() + pkt.payload_offset;
+            const uint8_t* payload = pkt.data_ptr + pkt.payload_offset;
             auto sni = SNIExtractor::extract(payload, pkt.payload_length);
             if (sni) {
                 flow.sni = *sni;
@@ -274,8 +275,7 @@ private:
         
         // Try HTTP Host extraction
         if (pkt.tuple.dst_port == 80 && pkt.payload_length > 10) {
-            const uint8_t* payload = pkt.data.data() + pkt.payload_offset;
-            auto host = HTTPHostExtractor::extract(payload, pkt.payload_length);
+            const uint8_t* payload = pkt.data_ptr + pkt.payload_offset;            auto host = HTTPHostExtractor::extract(payload, pkt.payload_length);
             if (host) {
                 flow.sni = *host;
                 flow.app_type = sniToAppType(*host);
@@ -420,11 +420,15 @@ public:
                 PcapPacketHeader phdr;
                 phdr.ts_sec = pkt_opt->ts_sec;
                 phdr.ts_usec = pkt_opt->ts_usec;
-                phdr.incl_len = pkt_opt->data.size();
-                phdr.orig_len = pkt_opt->data.size();
+                phdr.incl_len = pkt_opt->data_length;
+                phdr.orig_len = pkt_opt->data_length;
                 
                 output.write(reinterpret_cast<const char*>(&phdr), sizeof(phdr));
-                output.write(reinterpret_cast<const char*>(pkt_opt->data.data()), pkt_opt->data.size());
+                output.write(reinterpret_cast<const char*>(pkt_opt->data_ptr),
+             pkt_opt->data_length);
+
+// RETURN MEMORY TO POOL
+           g_pool.release(pkt_opt->pool_slot);  
             }
         });
         
@@ -444,8 +448,13 @@ public:
             pkt.ts_sec = raw.header.ts_sec;
             pkt.ts_usec = raw.header.ts_usec;
             pkt.tcp_flags = parsed.tcp_flags;
-            pkt.data = std::move(raw.data);
-            
+            size_t slot;
+            uint8_t* buf = g_pool.acquire(slot);
+            if (!buf) continue; // pool full safeguard
+             memcpy(buf, raw.data.data(), raw.data.size());
+           pkt.pool_slot   = slot;
+           pkt.data_ptr    = buf;
+           pkt.data_length = raw.data.size(); 
             // Parse 5-tuple
             auto parseIP = [](const std::string& ip) -> uint32_t {
                 uint32_t result = 0;
@@ -465,19 +474,19 @@ public:
             
             // Calculate payload offset
             pkt.payload_offset = 14;  // Ethernet
-            if (pkt.data.size() > 14) {
-                uint8_t ip_ihl = pkt.data[14] & 0x0F;
+            if (pkt.data_length > 14) {
+                uint8_t ip_ihl = pkt.data_ptr[14] & 0x0F;
                 pkt.payload_offset += ip_ihl * 4;
                 
-                if (parsed.has_tcp && pkt.payload_offset + 12 < pkt.data.size()) {
-                    uint8_t tcp_off = (pkt.data[pkt.payload_offset + 12] >> 4) & 0x0F;
+                if (parsed.has_tcp && pkt.payload_offset + 12 < pkt.data_length) {
+                    uint8_t tcp_off = (pkt.data_ptr[pkt.payload_offset + 12] >> 4) & 0x0F;
                     pkt.payload_offset += tcp_off * 4;
                 } else if (parsed.has_udp) {
                     pkt.payload_offset += 8;
                 }
                 
-                if (pkt.payload_offset < pkt.data.size()) {
-                    pkt.payload_length = pkt.data.size() - pkt.payload_offset;
+                if (pkt.payload_offset < pkt.data_length) {
+                    pkt.payload_length = pkt.data_length - pkt.payload_offset;
                 } else {
                     pkt.payload_length = 0;
                 }
@@ -485,7 +494,7 @@ public:
             
             // Update stats
             stats_.total_packets++;
-            stats_.total_bytes += pkt.data.size();
+            stats_.total_bytes += pkt.data_length;
             if (parsed.has_tcp) stats_.tcp_packets++;
             else if (parsed.has_udp) stats_.udp_packets++;
             
