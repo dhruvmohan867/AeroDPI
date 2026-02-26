@@ -18,7 +18,7 @@ This document explains **everything** about this project - from basic networking
 9. [How Blocking Works](#9-how-blocking-works)
 10. [Building and Running](#10-building-and-running)
 11. [Understanding the Output](#11-understanding-the-output)
-12. [Licence](#12-LICENCE)
+12. [Licence](#licence)
 ---
 
 ## 1. What is DPI?
@@ -1045,5 +1045,5 @@ This DPI engine demonstrates:
 The key insight is that even HTTPS traffic leaks the destination domain in the TLS handshake, allowing network operators to identify and control application usage.
 
 ---
-## License
-MIT  [LICENSE](LICENSE).
+## Licence
+MIT  [LICENCE](LICENCE).
